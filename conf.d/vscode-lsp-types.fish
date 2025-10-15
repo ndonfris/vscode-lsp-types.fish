@@ -1,60 +1,60 @@
-#!/usr/bin/env fish
 # Generate GitHub permalinks for vscode-languageserver type definitions
 # This file defines the vscode-lsp-types function, completions, and abbreviations
 
 # Main function definition
 function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserver type definition"
-    set -l type_name
-    set -l declaration_type # Will be: interface, type, class, enum, namespace, or empty (search all)
-    set -l should_open false
-    set -l should_copy true
+    # Parse arguments using argparse
+    argparse --name=vscode-lsp-types \
+        'h/help' \
+        'i/interface' \
+        't/type' \
+        'c/class' \
+        'e/enum' \
+        'n/namespace' \
+        'o/open' \
+        'no-copy' \
+        'u/url' \
+        -- $argv
+    or return
     
-    # Parse arguments
-    set -l i 1
-    while test $i -le (count $argv)
-        switch $argv[$i]
-            case --interface -i
-                set declaration_type interface
-            case --type -t
-                set declaration_type type
-            case --class -c
-                set declaration_type class
-            case --enum -e
-                set declaration_type enum
-            case --namespace -n
-                set declaration_type namespace
-            case --open -o
-                set should_open true
-            case --no-copy
-                set should_copy false
-            case --help -h
-                echo "Usage: vscode-lsp-types [options] <TypeName[.property]>" >&2
-                echo "" >&2
-                echo "Options:" >&2
-                echo "  -i, --interface   Search only for interfaces" >&2
-                echo "  -t, --type        Search only for type aliases" >&2
-                echo "  -c, --class       Search only for classes" >&2
-                echo "  -e, --enum        Search only for enums" >&2
-                echo "  -n, --namespace   Search only for namespaces" >&2
-                echo "  -o, --open        Open the permalink in the browser" >&2
-                echo "      --no-copy     Don't copy the permalink to clipboard" >&2
-                echo "  -h, --help        Show this help message" >&2
-                echo "" >&2
-                echo "Examples:" >&2
-                echo "  vscode-lsp-types CompletionItem" >&2
-                echo "  vscode-lsp-types LocationLink.targetUri" >&2
-                echo "  vscode-lsp-types --interface Hover" >&2
-                echo "  vscode-lsp-types -t Range --open" >&2
-                echo "  vscode-lsp-types Position --no-copy" >&2
-                echo "" >&2
-                echo "Abbreviation:" >&2
-                echo "  vsc -> vscode-lsp-types" >&2
-                return 0
-            case '*'
-                set type_name $argv[$i]
-        end
-        set i (math $i + 1)
+    # Show help if requested
+    if set -q _flag_help
+        echo "Usage: vscode-lsp-types [options] <TypeName[.property]>" >&2
+        echo "" >&2
+        echo "Options:" >&2
+        echo "  -i, --interface   Search only for interfaces" >&2
+        echo "  -t, --type        Search only for type aliases" >&2
+        echo "  -c, --class       Search only for classes" >&2
+        echo "  -e, --enum        Search only for enums" >&2
+        echo "  -n, --namespace   Search only for namespaces" >&2
+        echo "                    (Multiple type flags can be combined)" >&2
+        echo "  -o, --open        Open the permalink in the browser" >&2
+        echo "  -u, --url         Output only the URL (no 'open' prefix)" >&2
+        echo "      --no-copy     Don't copy the permalink to clipboard" >&2
+        echo "  -h, --help        Show this help message" >&2
+        echo "" >&2
+        echo "Examples:" >&2
+        echo "  vscode-lsp-types CompletionItem" >&2
+        echo "  vscode-lsp-types LocationLink.targetUri" >&2
+        echo "  vscode-lsp-types --interface Hover" >&2
+        echo "  vscode-lsp-types -t Range --open" >&2
+        echo "  vscode-lsp-types Position --no-copy" >&2
+        echo "" >&2
+        echo "Abbreviation:" >&2
+        echo "  vsc -> vscode-lsp-types" >&2
+        return 0
     end
+    
+    # Collect all specified declaration types
+    set -l declaration_types
+    for flag in _flag_{interface,type,class,enum,namespace}
+        if set -q $flag
+            set -a declaration_types (string sub -s (math (string length -- "_flag_") + 1) -- $flag)
+        end
+    end
+    
+    # Get type name from remaining arguments
+    set -l type_name $argv[1]
     
     # Get the latest commit SHA
     set -l commit_sha (gh api repos/microsoft/vscode-languageserver-node/commits/main --jq .sha 2>/dev/null)
@@ -68,12 +68,12 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
         set -l base_url "https://github.com/microsoft/vscode-languageserver-node/blob/$commit_sha/types/src/main.ts"
         
         # Copy to clipboard unless --no-copy is specified
-        if test "$should_copy" = true
+        if not set -q _flag_no_copy
             echo -n $base_url | fish_clipboard_copy 2>/dev/null
         end
         
         # Open in browser if requested
-        if test "$should_open" = true
+        if set -q _flag_open
             if command -q open
                 open $base_url
             else if command -q xdg-open
@@ -83,8 +83,12 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
             end
         end
         
-        # Output the open command
-        echo "open $base_url"
+        # Output the URL
+        if set -q _flag_url
+            echo $base_url
+        else
+            echo "open $base_url"
+        end
         return 0
     end
 
@@ -96,11 +100,12 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
         set property_name $parts[2]
     end
 
-    # Build the regex pattern based on declaration type
+    # Build the regex pattern based on declaration types
     set -l pattern
-    if test -n "$declaration_type"
-        # Search for specific declaration type
-        set pattern "^export $declaration_type $type_name"'[^a-zA-Z0-9_]'
+    if test (count $declaration_types) -gt 0
+        # Search for specific declaration types
+        set -l types_pattern (string join "|" $declaration_types)
+        set pattern "^export ($types_pattern) $type_name"'[^a-zA-Z0-9_]'
     else
         # Search for any declaration type
         set pattern "^export (interface|type|class|enum|namespace|declare) $type_name"'[^a-zA-Z0-9_]'
@@ -115,8 +120,9 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
 
     if test -z "$line_number"
         # Try without the export prefix
-        if test -n "$declaration_type"
-            set pattern "^$declaration_type $type_name"'[^a-zA-Z0-9_]'
+        if test (count $declaration_types) -gt 0
+            set -l types_pattern (string join "|" $declaration_types)
+            set pattern "^($types_pattern) $type_name"'[^a-zA-Z0-9_]'
         else
             set pattern "^(interface|type|class|enum|namespace) $type_name"'[^a-zA-Z0-9_]'
         end
@@ -156,12 +162,12 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
     set -l permalink "https://github.com/microsoft/vscode-languageserver-node/blob/$commit_sha/types/src/main.ts#L$line_number"
     
     # Copy to clipboard unless --no-copy is specified
-    if test "$should_copy" = true
+    if not set -q _flag_no_copy
         echo -n $permalink | fish_clipboard_copy 2>/dev/null
     end
     
     # Open in browser if requested
-    if test "$should_open" = true
+    if set -q _flag_open
         if command -q open
             open $permalink
         else if command -q xdg-open
@@ -173,22 +179,27 @@ function vscode-lsp-types -d "Generate GitHub permalink for vscode-languageserve
         end
     end
     
-    # Output the open command
-    echo "open $permalink"
+    # Output the URL
+    if set -q _flag_url
+        echo $permalink
+    else
+        echo "open $permalink"
+    end
 end
 
 # Completions for vscode-lsp-types
-complete -c vscode-lsp-types -s i -l interface -d "Search only for interfaces"
-complete -c vscode-lsp-types -s t -l type -d "Search only for type aliases"
-complete -c vscode-lsp-types -s c -l class -d "Search only for classes"
-complete -c vscode-lsp-types -s e -l enum -d "Search only for enums"
-complete -c vscode-lsp-types -s n -l namespace -d "Search only for namespaces"
-complete -c vscode-lsp-types -s o -l open -d "Open the permalink in the browser"
-complete -c vscode-lsp-types -l no-copy -d "Don't copy the permalink to clipboard"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s i interface' -s i -l interface  -d "Search only for interfaces"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s t type'      -s t -l type       -d "Search only for type aliases"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s c class'     -s c -l class      -d "Search only for classes"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s e enum'      -s e -l enum       -d "Search only for enums"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s n namespace' -s n -l namespace  -d "Search only for namespaces"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s o open'      -s o -l open       -d "Open the permalink in the browser"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt -s u url'       -s u -l url        -d "Output only the URL (no 'open' prefix)"
+complete -c vscode-lsp-types -n 'not __fish_contains_opt no-copy'             -l no-copy    -d "Don't copy the permalink to clipboard"
 complete -c vscode-lsp-types -s h -l help -d "Show help message"
 
 # Function to provide dynamic completions from the actual vscode-languageserver-node repository
-function __vscode_lsp_types_completions
+function __vscode_lsp_types_completions -d 'Fetch type names from vscode-languageserver-node repository'
     # Cache the types to avoid repeated API calls
     set -g __vscode_lsp_types_cache_time 2>/dev/null
     set -g __vscode_lsp_types_cache 2>/dev/null
@@ -210,7 +221,7 @@ function __vscode_lsp_types_completions
 end
 
 # Function to provide property completions for Type.property syntax
-function __vscode_lsp_types_property_completions
+function __vscode_lsp_types_property_completions -d 'Provide property completions for Type.property syntax'
     # Get the current token being completed
     set -l current_token (commandline -ct)
     
